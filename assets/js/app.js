@@ -2430,36 +2430,15 @@ createApp({
                 if (!regex) return [];
             }
 
-            const targetArtists = cardUtils.getImageStyleArtists(settings.imageStyle, settings.customImageArtists);
-            const styleName = imageStyleOptions.find(option => option.value === settings.imageStyle)?.label
-                || imageStyleOptions[0].label;
-
-            // 动态替换 URL 中的 artist 和 size 参数
-            const encodedTargetArtists = encodeURIComponent(targetArtists);
-            const oldReplacement = regex.replacement;
-            let newReplacement = oldReplacement.replace(/artist=[\s\S]*?(&size=)/, 'artist=' + encodedTargetArtists + '$1');
-            if (newReplacement === oldReplacement) {
-                newReplacement = oldReplacement.replace(/artist=[^&]+/, 'artist=' + encodedTargetArtists);
-            }
-            newReplacement = newReplacement.replace(/size=[^&]+/, 'size=' + settings.imageSize);
-            regex.replacement = newReplacement;
-
             let messages = [];
-            // 检查 Artist 变化
-            const oldArtist = oldReplacement.match(/artist=([\s\S]*?)&size=/)?.[1] || oldReplacement.match(/artist=([^&]+)/)?.[1];
-            if (oldArtist !== encodedTargetArtists) {
-                messages.push(styleName);
-            }
-            // 检查 Size 变化
-            const oldSize = oldReplacement.match(/size=([^&]+)/)?.[1];
-            if (oldSize !== settings.imageSize) {
-                messages.push(`比例: ${settings.imageSize}`);
-            }
+            const sizeLabel = imageSizeOptions.find(option => option.value === settings.imageSize)?.label
+                || imageSizeOptions[0].label;
 
             if (enableRegex && !regex.enabled) {
                 regex.enabled = true;
                 messages.push(`${imageGenRegexName} 已启用`);
             }
+            messages.push(`比例: ${sizeLabel}`);
 
             return messages;
         };
@@ -9903,6 +9882,21 @@ image###生成的提示词###
 
                             return normalizeRegexScript({ ...normalized, scope: 'character' }, 'character');
                         }).filter(script => script.scope !== 'global');
+                    }
+
+                    // --- Adapt NAI-based image generation regex to Gitee AI ---
+                    // Character cards may ship their own "NAI画图正则" regex with NAI API URLs
+                    // (e.g. nai.sta1n.cn, std.loliyc.com) that are no longer available.
+                    // Replace those with Gitee AI placeholders so images generate correctly.
+                    if (Array.isArray(char.regexScripts)) {
+                        const naiUrlPattern = /\/generate\?tag=|nai-diffusion|nai\.sta1n\.cn|loliyc\.com|sd\.stg\s*$/;
+                        char.regexScripts = char.regexScripts.map(script => {
+                            const replacement = script.replacement || script.replaceString || '';
+                            if (naiUrlPattern.test(replacement)) {
+                                script.replacement = '<div class="img-gen-placeholder" data-prompt="$1" style="width: auto; height: auto; max-width: 100%; box-sizing: border-box; padding: 2px; border: 1px solid rgba(255,255,255,0.58); background: rgba(255,255,255,0.32); position: relative; border-radius: 12px; overflow: hidden; display: inline-flex; justify-content: center; align-items: center; box-shadow: 0 4px 14px rgba(148,163,184,0.06); min-height: 40px; min-width: 40px;">🎨 生成中...</div>';
+                            }
+                            return script;
+                        });
                     }
 
                     characters.value.push(char);
