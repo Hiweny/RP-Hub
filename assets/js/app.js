@@ -150,12 +150,15 @@ createApp({
         const systemRegexNames = ['Auto Replace {{user}}', 'NAI画图正则'];
         const systemWorldInfoNames = ['自动生图'];
 
-        const IMAGE_GEN_BASE_URL = 'https://nai.sta1n.cn';
+        const IMAGE_GEN_BASE_URL = 'https://ai.gitee.com/v1';
+        const IMAGE_GEN_DEFAULT_API_KEY = 'KFMC4IBLB0V8LFYOWWVMERUJMQ29HNR3LJQSQTHN';
+        const IMAGE_GEN_DEFAULT_MODEL = 'z-image-turbo';
+        const IMAGE_GEN_DEFAULT_SIZE = '576x1024';
 
         // --- Default API Configuration ---
-        const DEFAULT_API_PROVIDER_ID = 'sta1n';
+        const DEFAULT_API_PROVIDER_ID = 'freeapi';
         const DEFAULT_API_CONFIG = {
-            apiUrl: 'https://cdn.sta1n.cn/v1',
+            apiUrl: 'https://free-api.cnmwx.com/v1',
             apiKey: '',
             model: '', // Default selected
             qualityModel: '',
@@ -164,6 +167,12 @@ createApp({
         };
 
         const apiProviderOptions = [
+            {
+                id: 'freeapi',
+                name: '公益API',
+                apiUrl: 'https://free-api.cnmwx.com/v1',
+                icon: ''
+            },
             {
                 id: 'sta1n',
                 name: 'STA1N API',
@@ -189,6 +198,21 @@ createApp({
                 icon: 'https://siliconflow.cn/favicon.ico'
             }
         ];
+
+        // --- Free API Ad Filter ---
+        const FREE_API_AD_PATTERNS = ['公益站', 'wxgpt@qq.com', '站长合作邮箱', '欢迎使用'];
+        const filterFreeApiAd = (text) => {
+            if (!text) return '';
+            let result = text;
+            for (const pattern of FREE_API_AD_PATTERNS) {
+                result = result.split(pattern).join('');
+            }
+            return result;
+        };
+        const isFreeApiTextAd = (text) => {
+            if (!text) return false;
+            return FREE_API_AD_PATTERNS.some(pattern => text.includes(pattern));
+        };
 
         // --- State ---
         const globalConfirmModal = ref({
@@ -255,34 +279,10 @@ createApp({
         const quotaError = ref(false);
 
         const fetchQuota = async () => {
-            quotaLoading.value = true;
+            // Gitee AI does not provide a quota check endpoint; show fixed info
+            quotaLoading.value = false;
             quotaError.value = false;
-            try {
-                const imageGenToken = settings.imageGenKey.trim();
-                if (!imageGenToken) {
-                    quotaValue.value = 0;
-                    return;
-                }
-                const baseUrl = IMAGE_GEN_BASE_URL;
-                const response = await fetch(`${baseUrl}/api/api/getUser`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ toUserId: imageGenToken })
-                });
-                const data = await response.json();
-                if (data.status === 'ok' && data.type === 'sta1n') {
-                    const val = Number.parseInt(data.data?.value, 10);
-                    if (!Number.isFinite(val)) throw new Error('Invalid quota value');
-                    quotaValue.value = val;
-                } else {
-                    quotaError.value = true;
-                }
-            } catch (e) {
-                console.error('Quota fetch error:', e);
-                quotaError.value = true;
-            } finally {
-                quotaLoading.value = false;
-            }
+            quotaValue.value = 100; // gitee AI free tier: 100 images/day
         };
 
         // Update Modal Logic
@@ -626,10 +626,10 @@ createApp({
             fontFamily: 'modern',
             fontFamilyVersion: 4,
             fontSize: window.innerWidth > 768 ? 16 : 14,
-            imageGenKey: '',
+            imageGenKey: IMAGE_GEN_DEFAULT_API_KEY,
             imageStyle: 'vertical',
             customImageArtists: '',
-            imageSize: '竖图',
+            imageSize: '576x1024',
             imageGenCount: 2,
             qualityModel: DEFAULT_API_CONFIG.qualityModel,
             balancedModel: DEFAULT_API_CONFIG.balancedModel,
@@ -716,6 +716,17 @@ createApp({
             return getApiProviderByUrl(settings.apiUrl) || customApiProviderOption;
         });
         const isCustomApiProvider = computed(() => isCustomApiProviderId(selectedApiProvider.value.id));
+        const isFreeApiProvider = computed(() => {
+            return settings.apiProviderId === 'freeapi' ||
+                normalizeApiProviderUrl(settings.apiUrl) === normalizeApiProviderUrl('https://free-api.cnmwx.com/v1');
+        });
+        const flattenMessagesToPrompt = (messages) => {
+            return messages.map(m => {
+                const roleLabel = m.role === 'user' ? (user.name || '用户')
+                    : (m.role === 'assistant' ? (currentCharacter.value?.name || '助手') : '系统');
+                return `${roleLabel}: ${m.content}`;
+            }).join('\n\n');
+        };
         const selectApiProvider = (provider) => {
             syncCurrentApiKeyToProvider();
             selectedApiProviderId.value = provider.id;
@@ -870,15 +881,9 @@ createApp({
             { value: 'custom', label: '自定义' }
         ];
         const imageSizeOptions = [
-            { value: '竖图', label: '竖图(-1)' },
-            { value: '横图', label: '横图(-1)' },
-            { value: '方图', label: '方图(-1)' },
-            { value: '2K竖图', label: '2K竖图(-15)' },
-            { value: '2K横图', label: '2K横图(-15)' },
-            { value: '2K方图', label: '2K方图(-15)' },
-            { value: '4K竖图', label: '4K竖图(-25)' },
-            { value: '4K横图', label: '4K横图(-25)' },
-            { value: '4K方图', label: '4K方图(-25)' }
+            { value: '576x1024', label: '竖图 (576×1024)' },
+            { value: '1024x576', label: '横图 (1024×576)' },
+            { value: '1024x1024', label: '方图 (1024×1024)' }
         ];
         const imageGenCountOptions = [1, 2, 3, 4, 5, 6].map(count => ({
             value: count,
@@ -3954,7 +3959,7 @@ ${content}
             // Configure DOMPurify
             const cleanConfig = {
                 ADD_TAGS: ['details', 'summary', 'iframe', 'svg', 'path', 'g', 'circle', 'rect', 'defs', 'linearGradient', 'stop', 'style', 'div', 'span', 'script', 'button', 'input'],
-                ADD_ATTR: ['style', 'open', 'srcdoc', 'sandbox', 'frameborder', 'allow', 'allowfullscreen', 'class', 'id', 'viewBox', 'fill', 'stroke', 'stroke-width', 'd', 'stroke-linecap', 'stroke-linejoin', 'x1', 'y1', 'x2', 'y2', 'offset', 'stop-color', 'stop-opacity', 'width', 'height', 'onclick', 'type', 'value', 'checked', 'data-slash'],
+                ADD_ATTR: ['style', 'open', 'srcdoc', 'sandbox', 'frameborder', 'allow', 'allowfullscreen', 'class', 'id', 'viewBox', 'fill', 'stroke', 'stroke-width', 'd', 'stroke-linecap', 'stroke-linejoin', 'x1', 'y1', 'x2', 'y2', 'offset', 'stop-color', 'stop-opacity', 'width', 'height', 'onclick', 'type', 'value', 'checked', 'data-slash', 'data-prompt', 'data-processed'],
                 FORBID_ATTR: ['onmouseover', 'onload'], // Removed onclick to allow interactive UI
                 FORCE_BODY: true
             };
@@ -4133,6 +4138,10 @@ ${content}
             : `${settings.apiUrl}/v1/${path}`;
 
         const fetchModels = async (isManual = false) => {
+            if (isFreeApiProvider.value) {
+                if (isManual) showToast('公益API无需选择模型', 'info');
+                return;
+            }
             const apiKey = String(settings.apiKey || '').trim();
             if (!apiKey) {
                 if (isManual) showToast('请先填写当前 API 预设的 Key', 'info');
@@ -4212,6 +4221,21 @@ ${content}
         };
 
         const checkApiStatus = async () => {
+            if (isFreeApiProvider.value) {
+                if (!settings.apiUrl) {
+                    apiStatus.value = 'error';
+                    return;
+                }
+                await checkConnectionStatus(apiStatus, apiLatency, 'API', signal => (
+                    fetch(getApiEndpoint('completions'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ prompt: 'hi' }),
+                        signal
+                    })
+                ));
+                return;
+            }
             if (!settings.apiUrl || !settings.apiKey) {
                 apiStatus.value = 'error';
                 return;
@@ -4226,18 +4250,86 @@ ${content}
 
         const checkImageGenStatus = async () => {
             await checkConnectionStatus(imageGenStatus, imageGenLatency, 'Image API', signal => (
-                fetch(IMAGE_GEN_BASE_URL, {
-                    method: 'HEAD',
-                    mode: 'no-cors',
+                fetch(`${IMAGE_GEN_BASE_URL}/images/generations`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${settings.imageGenKey || IMAGE_GEN_DEFAULT_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        prompt: 'test',
+                        model: IMAGE_GEN_DEFAULT_MODEL,
+                        n: 1,
+                        size: IMAGE_GEN_DEFAULT_SIZE
+                    }),
                     signal
                 })
-            ), () => true);
+            ));
         };
 
         const checkAllStatuses = () => {
             checkApiStatus();
             checkImageGenStatus();
             fetchQuota();
+        };
+
+        // --- OpenAI-compatible Image Generation (Gitee AI) ---
+        const generateImageViaApi = async (prompt) => {
+            const apiKey = settings.imageGenKey || IMAGE_GEN_DEFAULT_API_KEY;
+            const model = IMAGE_GEN_DEFAULT_MODEL;
+            const size = settings.imageSize || IMAGE_GEN_DEFAULT_SIZE;
+            const response = await fetch(`${IMAGE_GEN_BASE_URL}/images/generations`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ prompt, model, n: 1, size })
+            });
+            if (!response.ok) throw new Error(`Image API error: ${response.status}`);
+            const data = await response.json();
+            const b64 = data?.data?.[0]?.b64_json;
+            if (!b64) throw new Error('Image API returned no data');
+            return `data:image/png;base64,${b64}`;
+        };
+
+        const processingImagePlaceholders = new Set();
+        const processImagePlaceholders = () => {
+            const placeholders = document.querySelectorAll('.img-gen-placeholder:not([data-processed])');
+            placeholders.forEach(async (el) => {
+                if (el.getAttribute('data-processed')) return;
+                const prompt = el.getAttribute('data-prompt');
+                if (!prompt) { el.setAttribute('data-processed', 'true'); return; }
+                if (processingImagePlaceholders.has(el)) return;
+                processingImagePlaceholders.add(el);
+                el.setAttribute('data-processed', 'loading');
+                el.textContent = '🎨 生成中...';
+                try {
+                    const dataUrl = await generateImageViaApi(prompt);
+                    el.setAttribute('data-processed', 'done');
+                    el.innerHTML = '';
+                    const img = document.createElement('img');
+                    img.src = dataUrl;
+                    img.alt = '生成图片';
+                    img.style.cssText = 'max-width: 100%; height: auto; width: auto; display: block; object-fit: contain; border-radius: 9px; transition: transform 0.3s ease;';
+                    el.appendChild(img);
+                } catch (e) {
+                    console.error('Image generation error:', e);
+                    el.setAttribute('data-processed', 'error');
+                    el.textContent = '❌ 图片生成失败';
+                } finally {
+                    processingImagePlaceholders.delete(el);
+                }
+            });
+        };
+
+        let imageGenObserver = null;
+        const setupImageGenObserver = () => {
+            if (imageGenObserver) return;
+            imageGenObserver = new MutationObserver(() => {
+                processImagePlaceholders();
+            });
+            imageGenObserver.observe(document.body, { childList: true, subtree: true });
         };
 
         const createAbortReason = (message = 'Operation aborted') => {
@@ -4534,6 +4626,10 @@ ${content}
             const fallbackModel = (settings.uiTemplateModel || '').trim();
             if (!fallbackModel) {
                 markUiTemplateStatus('skipped', '未选模型');
+                return false;
+            }
+            if (isFreeApiProvider.value) {
+                markUiTemplateStatus('skipped', '公益API不支持');
                 return false;
             }
             const url = getApiEndpoint('chat/completions');
@@ -5833,22 +5929,35 @@ ${content}
             };
 
             try {
-                        const url = getApiEndpoint('chat/completions');
-                        const response = await fetch(url, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${settings.apiKey}`
-                            },
-                            body: JSON.stringify({
-                                model: requestModel,
-                                messages: apiMessages,
-                                temperature: settings.temperature,
-                                stream: settings.stream,
-                                ...(settings.stream ? { stream_options: { include_usage: true } } : {})
-                            }),
-                            signal: abortController.value.signal
-                        });
+                        const isFreeApi = isFreeApiProvider.value;
+                        let url, response;
+                        if (isFreeApi) {
+                            url = getApiEndpoint('completions');
+                            const prompt = flattenMessagesToPrompt(apiMessages);
+                            response = await fetch(url, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ prompt }),
+                                signal: abortController.value.signal
+                            });
+                        } else {
+                            url = getApiEndpoint('chat/completions');
+                            response = await fetch(url, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${settings.apiKey}`
+                                },
+                                body: JSON.stringify({
+                                    model: requestModel,
+                                    messages: apiMessages,
+                                    temperature: settings.temperature,
+                                    stream: settings.stream,
+                                    ...(settings.stream ? { stream_options: { include_usage: true } } : {})
+                                }),
+                                signal: abortController.value.signal
+                            });
+                        }
 
                         if (!response.ok) {
                             let errorDetail = '';
@@ -5873,7 +5982,7 @@ ${content}
 
                         // Check Content-Type to determine if we should stream
                         const contentType = response.headers.get('content-type');
-                        const isStream = settings.stream && contentType && contentType.includes('text/event-stream');
+                        const isStream = isFreeApi || (settings.stream && contentType && contentType.includes('text/event-stream'));
 
                         if (isStream) {
                             const reader = response.body.getReader();
@@ -5913,6 +6022,43 @@ ${content}
                                 for (const line of lines) {
                                     const trimmedLine = line.trim();
                                     if (!trimmedLine) continue;
+
+                                    if (isFreeApi) {
+                                        // Free API: handle plain text SSE and non-SSE text
+                                        let content = '';
+                                        if (trimmedLine.startsWith('data: ')) {
+                                            const dataStr = trimmedLine.slice(6);
+                                            if (dataStr === '[DONE]') continue;
+                                            try {
+                                                const data = JSON.parse(dataStr);
+                                                content = data.choices?.[0]?.delta?.content || data.content || data.response || data.text || '';
+                                            } catch {
+                                                content = dataStr;
+                                            }
+                                        } else if (trimmedLine.startsWith('data:')) {
+                                            const dataStr = trimmedLine.slice(5).trim();
+                                            if (dataStr === '[DONE]') continue;
+                                            content = dataStr;
+                                        } else {
+                                            content = trimmedLine;
+                                        }
+                                        // Filter out ads
+                                        content = filterFreeApiAd(content);
+                                        if (isFreeApiTextAd(content)) content = '';
+
+                                        if (content) {
+                                            rawAssistantContentForLog += content;
+                                            if (!assistantMessage) {
+                                                assistantMessage = ensureAssistantMessage(content, '');
+                                                isThinking.value = false;
+                                                await nextTick();
+                                            } else {
+                                                appendAssistantText(assistantMessage, 'content', content);
+                                                isThinking.value = false;
+                                            }
+                                        }
+                                        continue;
+                                    }
 
                                     if (trimmedLine.startsWith('data: ')) {
                                         const dataStr = trimmedLine.slice(6);
@@ -5981,6 +6127,15 @@ ${content}
                             const rawText = await response.text();
                             let content = '';
 
+                            if (isFreeApi) {
+                                // Free API non-stream fallback: treat as plain text
+                                content = filterFreeApiAd(rawText);
+                                if (content) {
+                                    rawAssistantContentForLog += content;
+                                    assistantMessage = ensureAssistantMessage(content, '');
+                                    isThinking.value = false;
+                                }
+                            } else {
                             try {
                                 // 1. Try parsing as standard JSON
                                 const data = JSON.parse(rawText);
@@ -6061,6 +6216,7 @@ ${content}
 
                                 }
                             }
+                            } // end else (non-freeApi non-streaming)
                         }
 
                         recordApiUsage(responseUsage, {
@@ -6388,6 +6544,7 @@ ${content}
 
         const requestClassicMemorySummary = async (job, signal) => {
             const model = String(memorySettings.classicModel || '').trim();
+            if (isFreeApiProvider.value) throw new Error('公益API不支持记忆总结功能，请切换至OpenAI兼容API');
             if (!settings.apiUrl || !settings.apiKey) throw new Error('请先配置 API 地址和 Key');
             if (!model) throw new Error('请先选择总结模式副模型');
 
@@ -6661,6 +6818,7 @@ ${content}
 
         const requestMemoryEmbeddings = async (inputs, signal) => {
             const model = getMemoryEmbeddingModel();
+            if (isFreeApiProvider.value) throw new Error('公益API不支持向量嵌入功能，请切换至OpenAI兼容API');
             if (!settings.apiUrl || !settings.apiKey) throw new Error('请先配置 API 地址和 Key');
             if (!model) throw new Error('请先选择向量嵌入模型');
 
@@ -9002,18 +9160,12 @@ ${content}
         };
 
         const enforceSpecialRules = () => {
-            const imageGenToken = settings.imageGenKey.trim();
-            const baseUrl = IMAGE_GEN_BASE_URL;
-
-            // 1. NAI画图正则 (统一版本)
+            // 1. 生图正则 (OpenAI-compatible: gitee AI)
             const imageGenRegexName = 'NAI画图正则';
-            const targetArtists = cardUtils.getImageStyleArtists(settings.imageStyle, settings.customImageArtists);
-
-            const encodedTargetArtists = encodeURIComponent(targetArtists);
             const imageGenRegexContent = {
                 name: imageGenRegexName,
                 regex: '/image###([\\s\\S]*?)###/g',
-                replacement: '<div style="width: auto; height: auto; max-width: 100%; box-sizing: border-box; padding: 2px; border: 1px solid rgba(255,255,255,0.58); background: rgba(255,255,255,0.32); position: relative; border-radius: 12px; overflow: hidden; display: inline-flex; justify-content: center; align-items: center; box-shadow: 0 4px 14px rgba(148,163,184,0.06);"><img src="' + baseUrl + '/generate?tag=$1&token=' + imageGenToken + '&model=nai-diffusion-4-5-full&artist=' + encodedTargetArtists + '&size=' + settings.imageSize + '&steps=40&scale=6&cfg=0&sampler=k_dpmpp_2m_sde&negative={{{{bad anatomy}}}},{bad feet},bad hands,{{{bad proportions}}},{blurry},cloned face,cropped,{{{deformed}}},{{{disfigured}}},error,{{{extra arms}}},{extra digit},{{{extra legs}}},extra limbs,{{extra limbs}},{fewer digits},{{{fused fingers}}},gross proportions,ink eyes,ink hair,jpeg artifacts,{{{{long neck}}}},low quality,{malformed limbs},{{missing arms}},{missing fingers},{{missing legs}},{{{more than 2 nipples}}},mutated hands,{{{mutation}}},normal quality,owres,{{poorly drawn face}},{{poorly drawn hands}},reen eyes,signature,text,{{too many fingers}},{{{ugly}}},username,uta,watermark,worst quality,{{{more than 2 legs}}},awkward hand sign,weird hand gesture,contorted hand,unnatural finger pose,deformed hand gesture,{shaka},{hang loose},{{rock on}},{shaka sign}&nocache=0&noise_schedule=karras"  alt="生成图片" style="max-width: 100%; height: auto; width: auto; display: block; object-fit: contain; border-radius: 9px; transition: transform 0.3s ease;"></div>',
+                replacement: '<div class="img-gen-placeholder" data-prompt="$1" style="width: auto; height: auto; max-width: 100%; box-sizing: border-box; padding: 2px; border: 1px solid rgba(255,255,255,0.58); background: rgba(255,255,255,0.32); position: relative; border-radius: 12px; overflow: hidden; display: inline-flex; justify-content: center; align-items: center; box-shadow: 0 4px 14px rgba(148,163,184,0.06); min-height: 40px; min-width: 40px;">🎨 生成中...</div>',
                 placement: [2],
                 markdownOnly: true,
                 promptOnly: false,
@@ -10519,6 +10671,9 @@ ${memoryFragmentSection}
             if (settings.autoFetchModels) {
                 fetchModels();
             }
+
+            // Setup image generation observer for async placeholder processing
+            setupImageGenObserver();
 
             // Initial Status Check
             checkAllStatuses();

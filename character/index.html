@@ -1748,7 +1748,10 @@
                     document.documentElement.dataset.appFont = normalizeFontFamily(value);
                 };
                 applyFontFamily('modern');
-                const IMAGE_GEN_BASE_URL = 'https://nai.sta1n.cn';
+                const IMAGE_GEN_BASE_URL = 'https://ai.gitee.com/v1';
+                const IMAGE_GEN_DEFAULT_API_KEY = 'KFMC4IBLB0V8LFYOWWVMERUJMQ29HNR3LJQSQTHN';
+                const IMAGE_GEN_DEFAULT_MODEL = 'z-image-turbo';
+                const IMAGE_GEN_DEFAULT_SIZE = '576x1024';
 
                 // Main Settings Sync Listener
                 const setupSyncListener = () => {
@@ -1802,7 +1805,7 @@
                 const defaultOptions = {
                     generateExtra: true, // Default to true as requested
                     avatarStyle: 'default',
-                    imageGenKey: '',
+                    imageGenKey: IMAGE_GEN_DEFAULT_API_KEY,
                     customModels: {
                         quality: '',
                         balanced: '',
@@ -3518,18 +3521,30 @@ ${FIRST_MESSAGE_FINAL_CHECKS}
                 });
 
                 // Avatar Helpers
-                const generateAvatarUrl = (tag) => {
-                    let url;
-                    console.log('%c[Workshop Image Request]', 'color: #ec4899; font-weight: bold;', { style: options.avatarStyle, tag: tag });
-                    const tokenParam = options.imageGenKey.trim();
-                    const targetArtists = cardUtils.getImageStyleArtists(options.avatarStyle);
-
-                    const baseUrl = IMAGE_GEN_BASE_URL;
-                    url = `${baseUrl}/generate?tag=${encodeURIComponent(tag)}&token=${tokenParam}&model=nai-diffusion-4-5-full&artist=${encodeURIComponent(targetArtists)}&size=竖图&steps=40&scale=6&cfg=0&sampler=k_dpmpp_2m_sde&negative={{{{bad anatomy}}}},{bad feet},bad hands,{{{bad proportions}}},{blurry},cloned face,cropped,{{{deformed}}},{{{disfigured}}},error,{{{extra arms}}},{extra digit},{{{extra legs}}},extra limbs,{{extra limbs}},{fewer digits},{{{fused fingers}}},gross proportions,ink eyes,ink hair,jpeg artifacts,{{{{long neck}}}},low quality,{malformed limbs},{{missing arms}},{missing fingers},{{missing legs}},{{{more than 2 nipples}}},mutated hands,{{{mutation}}},normal quality,owres,{{poorly drawn face}},{{poorly drawn hands}},reen eyes,signature,text,{{too many fingers}},{{{ugly}}},username,uta,watermark,worst quality,{{{more than 2 legs}}},awkward hand sign,weird hand gesture,contorted hand,unnatural finger pose,deformed hand gesture{shaka},{hang loose},{{rock on}},{shaka sign}&nocache=0&noise_schedule=karras`;
-                    return url;
+                const generateAvatar = async (tag) => {
+                    console.log('%c[Workshop Image Request]', 'color: #ec4899; font-weight: bold;', { tag: tag });
+                    const apiKey = (options.imageGenKey || '').trim() || IMAGE_GEN_DEFAULT_API_KEY;
+                    const response = await fetch(`${IMAGE_GEN_BASE_URL}/images/generations`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${apiKey}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            prompt: tag,
+                            model: IMAGE_GEN_DEFAULT_MODEL,
+                            n: 1,
+                            size: IMAGE_GEN_DEFAULT_SIZE
+                        })
+                    });
+                    if (!response.ok) throw new Error(`Image API error: ${response.status}`);
+                    const data = await response.json();
+                    const b64 = data?.data?.[0]?.b64_json;
+                    if (!b64) throw new Error('Image API returned no data');
+                    return `data:image/png;base64,${b64}`;
                 };
 
-                const rerollAvatar = () => {
+                const rerollAvatar = async () => {
                     const prompt = currentCharacter.value.avatar_prompt;
                     if (!prompt) {
                         showToast('当前没有可用的头像提示词', 'warning');
@@ -3552,13 +3567,15 @@ ${FIRST_MESSAGE_FINAL_CHECKS}
                     const newPrompt = tags.join(', ');
                     currentCharacter.value.avatar_prompt = newPrompt;
 
-                    // Generate new URL
-                    const newUrl = generateAvatarUrl(newPrompt);
-
-                    // Force update avatar
-                    currentCharacter.value.avatar = newUrl;
-
-                    showToast('已重新生成头像', 'success');
+                    // Generate new avatar via API
+                    try {
+                        showToast('正在生成头像...', 'info');
+                        const newUrl = await generateAvatar(newPrompt);
+                        currentCharacter.value.avatar = newUrl;
+                        showToast('已重新生成头像', 'success');
+                    } catch (e) {
+                        showToast('头像生成失败: ' + e.message, 'error');
+                    }
                 };
 
                 // Generation Logic
@@ -3992,8 +4009,11 @@ JSON 字段（世界书/正则脚本）必须输出为合法的 JSON 数组，**
                                         currentCharacter.value.avatar_prompt = tag;
                                         // 仅在配置了密钥时才生成图片 URL 并赋值，否则保持为空或旧数据，直到最后提示用户
                                         if (options.imageGenKey) {
-                                            let url = generateAvatarUrl(tag);
-                                            currentCharacter.value.avatar = url;
+                                            generateAvatar(tag).then(url => {
+                                                currentCharacter.value.avatar = url;
+                                            }).catch(e => {
+                                                console.error('Avatar generation failed:', e);
+                                            });
                                         } else {
                                             console.log('Image Generation Key is empty, skipping image request.');
                                         }
